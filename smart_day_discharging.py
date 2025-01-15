@@ -29,16 +29,17 @@ class SmartDayDischarging(hass.Hass):
             self.log("Error: Not enough data for price calculation")
             return
 
-        # Only consider the hours between 7:00 and 21:00 (indices 7 to 22)
-        filtered_prices = today_prices[7:23]  # hours 7 to 21 (inclusive)
+        # Only consider the hours between 6:00 and 22:00 (indices 6 to 22)
+        filtered_prices = today_prices[6:23]  # hours 6 to 22 (inclusive)
+        self.log(f"Filtered prices (6:00-22:00): {filtered_prices}")
 
-        # Sort the hours by price (descending) and select the top 7 most expensive hours
+        # Sort the hours by price (descending)
         sorted_hours = sorted(
-            [(i + 7, price) for i, price in enumerate(filtered_prices) if price is not None],
+            [(i + 6, price) for i, price in enumerate(filtered_prices) if price is not None],
             key=lambda x: x[1],
             reverse=True
         )
-        self.log(f"Sorted hours (7-22) by price (descending): {sorted_hours}")
+        self.log(f"Sorted hours (6:00-22:00) by price (descending): {sorted_hours}")
 
         # Select the 7 most expensive hours
         most_expensive_7 = sorted_hours[:7]
