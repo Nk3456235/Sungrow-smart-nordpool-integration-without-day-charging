@@ -29,64 +29,63 @@ class SmartDayDischarging(hass.Hass):
             self.log("Error: Not enough data for price calculation")
             return
 
-        # Only consider the hours between 7:00 and 21:00 (indices 7 to 22)
-        filtered_prices = today_prices[7:23]  # hours 7 to 21 (inclusive)
+        # Proceed with selecting discharging hours
+        # Only consider the hours between 6:00 and 22:00 (indices 6 to 22)
+        filtered_prices = today_prices[6:23]  # hours 6 to 22 (inclusive)
+        self.log(f"Filtered prices (6:00-22:00): {filtered_prices}")
 
-        # Sort the hours by price (descending) and select the top 7 most expensive hours
-        sorted_hours = sorted(
-            [(i + 7, price) for i, price in enumerate(filtered_prices) if price is not None],
-            key=lambda x: x[1],
-            reverse=True
-        )
-        self.log(f"Sorted hours (7-22) by price (descending): {sorted_hours}")
-
-        # Select the 7 most expensive hours
-        most_expensive_7 = sorted_hours[:7]
-        self.log(f"Selected 7 most expensive hours: {most_expensive_7}")
-
-        # Calculate the mean price of the 7 most expensive hours
-        mean_7_expensive = sum(price for _, price in most_expensive_7) / len(most_expensive_7)
-        self.log(f"Calculated mean price for 7 most expensive hours: {mean_7_expensive:.2f}")
-
-        # Fetch the value of sensor.selected_charging_hours_prices
+        # Fetch mean price of last charge
         mean_price_value = float(self.get_state(self.mean_price_sensor, state=None) or 0)
 
         # If the mean_price_value is 0, use the value from sensor.chosen_3_hours instead
         if mean_price_value == 0:
             mean_price_value = float(self.get_state('sensor.mock_chosen_3_hours', state=None) or 0)
-            self.log(f"Using value from sensor.mock_chosen_3_hours: {mean_price_value:.2f}")
+            self.log(f"Missing value of last charge, using value from sensor.mock_chosen_3_hours: {mean_price_value:.2f} öre")
         else:
-            self.log(f"Mean night charging price: {mean_price_value:.2f}")
+            self.log(f"Mean price of last charge: {mean_price_value:.2f} öre")
 
-        # Calculate the price difference
-        price_difference = mean_7_expensive - mean_price_value
-        self.log(f"Price difference: {price_difference:.2f}")
+        # Select hours where the price is at least 40 öre more expensive than the mean price
+        selected_hours = []
+        for i, price in enumerate(filtered_prices):
+            if price is not None and price >= mean_price_value + 40:
+                selected_hours.append((i + 6, price))  # Store the hour (adjusting for index) and the price
 
+        # Sort the selected hours by price (descending) to pick the most expensive ones
+        selected_hours.sort(key=lambda x: x[1], reverse=True)
 
-        if price_difference > 40: # CHANGEME
-            self.log("Price difference is greater than 40 öre, scheduling discharging.")
-            self.log_to_logbook("Price difference is greater than 40 öre, scheduling discharging.")
-            # Proceed with scheduling discharging
-            selected_hours = [hour for hour, _ in most_expensive_7]
-            selected_hours.sort()  # Ensure hours are sorted in order
+        # Limit the number of selected hours to a maximum of 7
+        selected_hours = selected_hours[:7]
+        self.log(f"Selected hours (most expensive, at least 40 öre more expensive than mean price of last charge): {selected_hours}")
+
+        # If we have selected any hours
+        if selected_hours:
+            # Extract the hours for scheduling
+            selected_hour_indices = [hour for hour, _ in selected_hours]
+            selected_hour_indices.sort()  # Ensure hours are sorted in order
 
             # Format the time range string for selected hours
-            time_range_str = self.split_into_ranges(selected_hours)
+            time_range_str = self.split_into_ranges(selected_hour_indices)
             self.log(f"Today's selected time range for discharging: {time_range_str}")
-            self.set_state(self.output_selected_hours, state=f"{time_range_str} | Mean: {mean_7_expensive:.2f}",
-                attributes={"selected_hours": selected_hours, "mean_price_for_selected_hours": mean_7_expensive})
+            
+            # Calculate the mean price of the selected hours
+            mean_selected_price = sum(price for _, price in selected_hours) / len(selected_hours)
+
+            # Update the state with the selected hours and the mean price for the selected hours
+            self.set_state(self.output_selected_hours, state=f"{time_range_str} | Mean: {mean_selected_price:.2f}",
+                        attributes={"selected_hours": selected_hour_indices, "mean_price_for_selected_hours": mean_selected_price})
 
             # Update the new sensor for the mean price of the selected hours
-            self.set_state(self.output_prices_for_selected_hours, state=f"{mean_7_expensive:.2f}",
-                attributes={"mean_price_for_selected_hours": mean_7_expensive})
+            self.set_state(self.output_prices_for_selected_hours, state=f"{mean_selected_price:.2f}",
+                        attributes={"mean_price_for_selected_hours": mean_selected_price})
 
             # Schedule discharging for the selected hours
-            self.schedule_discharging(selected_hours)
+            self.schedule_discharging(selected_hour_indices)
         else:
-            self.log("Price difference is too low, discharging will not be scheduled.")
-            self.log_to_logbook("Price difference is too low, discharging will not be scheduled.")
-            self.set_state(self.output_selected_hours, state="Price difference too low")
-            self.set_state(self.output_prices_for_selected_hours, state="Price difference too low")
+            self.log("No hours found with a price at least 40 öre more expensive than the mean price.")
+            self.log_to_logbook("No hours found with a price at least 40 öre more expensive than the mean price.")
+            self.set_state(self.output_selected_hours, state="No suitable hours found")
+            self.set_state(self.output_prices_for_selected_hours, state="No suitable hours found")
+
 
     def split_into_ranges(self, selected_hours):
         """Split selected hours into continuous ranges and output as start-end format."""
